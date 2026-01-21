@@ -3,6 +3,7 @@ Python tools for fast preview mosaics of Nanonis SPM SXM data.
 
 Files:
 - sxm_preview.py: Generate channel mosaics per folder.
+- sxm_preview_parallel.py: Parallel wrapper for large datasets.
 - make_test_subset.py: Create a random test subset of SXM files.
 
 Running instructions:
@@ -17,6 +18,9 @@ Running instructions:
 
 4) Full dataset run with a central preview copy
    py -3 sxm_preview.py "C:\\data\\spm" --recursive --collect-dir "C:\\data\\spm_previews"
+
+5) Parallel full dataset run (use 4 workers)
+   py -3 sxm_preview_parallel.py "C:\\data\\spm" --recursive --collect-dir "C:\\data\\spm_previews" --workers 4
 
 Output description:
 - Output goes to a folder named "PreviewPy" inside each processed day folder.
@@ -46,3 +50,4 @@ Performance and notes:
 - Full dataset runs can take hours; run from a local terminal for long jobs.
 - --collect-dir duplicates images and increases storage usage.
 - Default mosaic size is capped at 5x5 tiles with grid lines between tiles; adjust with --max-tiles or --cols if needed.
+- Parallel mode updates the progress bar per folder completion (coarser than per file).
