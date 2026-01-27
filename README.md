@@ -1,14 +1,17 @@
 # Nanonis-SPM-PyPreview
-Python tools for fast preview mosaics of Nanonis SPM SXM data.
+Nanonis-RHK-SPM-PyPreview
+
+Python tools for fast preview mosaics of Nanonis SXM and RHK SM4 data.
 
 Files:
 - sxm_preview.py: Generate channel mosaics per folder.
 - sxm_preview_parallel.py: Parallel wrapper for large datasets.
-- make_test_subset.py: Create a random test subset of SXM files.
+- make_test_subset.py: Create a random test subset of SXM/SM4 files.
 
 Running instructions:
 1) Create a test subset
    py -3 make_test_subset.py --root "C:\\data\\spm" --out "C:\\data\\spm_test_subset" --days 3 --files-per-day 12 --seed 2025
+   (Optional) Restrict extensions: --extensions sm4
 
 2) Generate mosaics for the test subset (recursive year/month/day)
    py -3 sxm_preview.py "C:\\data\\spm_test_subset" --recursive
@@ -34,6 +37,7 @@ Channel filtering rules (default):
 - Skip channels that are constant or all-zero (configurable by tolerance).
 - Z channel: generate two mosaics (raw Z and Z_line row-normalized).
 - Current: keep only when a Freq Shift channel has signal; otherwise drop it.
+- SM4: use only topography (Z) forward pages (Z and Z_line mosaics).
 
 Common parameters:
 - --max-tiles: Max tiles per mosaic (default 25, i.e., 5x5).
