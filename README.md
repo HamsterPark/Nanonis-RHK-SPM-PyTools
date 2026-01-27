@@ -1,4 +1,3 @@
-# Nanonis-SPM-PyPreview
 Nanonis-RHK-SPM-PyPreview
 
 Python tools for fast preview mosaics of Nanonis SXM and RHK SM4 data.
@@ -25,6 +24,10 @@ Running instructions:
 5) Parallel full dataset run (use 4 workers)
    py -3 sxm_preview_parallel.py "C:\\data\\spm" --recursive --collect-dir "C:\\data\\spm_previews" --workers 4
 
+SM4 note:
+- SM4 previews are also copied to a root-level folder by default: "SM4_PreviewPy".
+- Override with --sm4-collect-dir or disable by setting it to empty ("").
+
 Output description:
 - Output goes to a folder named "PreviewPy" inside each processed day folder.
 - Each channel becomes a mosaic PNG; large folders are split into multiple images.
@@ -48,6 +51,7 @@ Common parameters:
 - --zero-tol: All-zero detection tolerance (default 0).
 - --no-label: Disable file tail labels.
 - --collect-dir: Copy all mosaics into one folder with prefixed names.
+- --sm4-collect-dir: Root-level SM4 preview folder (default "SM4_PreviewPy"; empty to disable).
 - --no-progress: Disable progress bar.
 
 Performance and notes:
