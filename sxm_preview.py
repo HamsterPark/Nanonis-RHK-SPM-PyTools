@@ -56,6 +56,18 @@ CMAP_CYCLE = [
 GRID_COLOR = (48, 48, 48)
 GRID_WIDTH = 1
 
+SUPPORTED_EXTS = {".sxm", ".sm4"}
+
+SM4_OBJECT_PAGE_INDEX_HEADER = 1
+SM4_OBJECT_PAGE_INDEX_ARRAY = 2
+SM4_OBJECT_PAGE_HEADER = 3
+SM4_OBJECT_PAGE_DATA = 4
+
+SM4_PAGE_DATA_IMAGE = 0
+SM4_PAGE_TOPOGRAPHIC = 1
+SM4_SCAN_FORWARD = 0
+SM4_FLOAT_LINE_TYPES = {1, 6, 9, 10, 11, 13, 18, 19, 21, 22}
+
 
 @dataclass
 class ChannelInfo:
@@ -204,6 +216,174 @@ def read_channel(handle, header, channel_index: int):
     if data.size != count:
         raise ValueError("Unexpected end of file while reading data")
     return data.reshape((ny, nx))
+
+
+def _read_sm4_array(handle, dtype, count):
+    data = np.fromfile(handle, dtype=dtype, count=count)
+    if data.size != count:
+        raise ValueError("Unexpected end of file while reading SM4 data")
+    return data
+
+
+def _read_sm4_value(handle, dtype):
+    return _read_sm4_array(handle, dtype, 1)[0]
+
+
+def _read_sm4_objects(handle, count):
+    objects = []
+    for _ in range(count):
+        obj_id = int(_read_sm4_value(handle, np.uint32))
+        offset = int(_read_sm4_value(handle, np.uint32))
+        size = int(_read_sm4_value(handle, np.uint32))
+        objects.append((obj_id, offset, size))
+    return objects
+
+
+def _find_sm4_object_offset(objects, target_id):
+    for obj_id, offset, _size in objects:
+        if obj_id == target_id:
+            return offset
+    return None
+
+
+def _read_sm4_page_header(handle, offset):
+    handle.seek(offset, 0)
+    _ = _read_sm4_value(handle, np.uint16)  # field size
+    _ = _read_sm4_value(handle, np.uint16)  # string count
+    page_type = int(_read_sm4_value(handle, np.uint32))
+    _ = _read_sm4_value(handle, np.uint32)  # data sub source
+    line_type = int(_read_sm4_value(handle, np.uint32))
+    _ = _read_sm4_value(handle, np.uint32)  # xcorner
+    _ = _read_sm4_value(handle, np.uint32)  # ycorner
+    xsize = int(_read_sm4_value(handle, np.uint32))
+    ysize = int(_read_sm4_value(handle, np.uint32))
+    _ = _read_sm4_value(handle, np.uint32)  # image type
+    scan_type = int(_read_sm4_value(handle, np.uint32))
+    _ = _read_sm4_value(handle, np.uint32)  # group id
+    page_data_size = int(_read_sm4_value(handle, np.uint32))
+    _ = _read_sm4_value(handle, np.uint32)  # min z
+    _ = _read_sm4_value(handle, np.uint32)  # max z
+    xscale = float(_read_sm4_value(handle, np.float32))
+    yscale = float(_read_sm4_value(handle, np.float32))
+    zscale = float(_read_sm4_value(handle, np.float32))
+    _ = _read_sm4_value(handle, np.float32)  # xyscale
+    _ = _read_sm4_value(handle, np.float32)  # xoffset
+    _ = _read_sm4_value(handle, np.float32)  # yoffset
+    zoffset = float(_read_sm4_value(handle, np.float32))
+    _ = _read_sm4_value(handle, np.float32)  # period
+    _ = _read_sm4_value(handle, np.float32)  # bias
+    _ = _read_sm4_value(handle, np.float32)  # current
+    _ = _read_sm4_value(handle, np.uint32)  # color info count
+    _ = _read_sm4_value(handle, np.uint32)  # grid xsize
+    _ = _read_sm4_value(handle, np.uint32)  # grid ysize
+    _ = _read_sm4_value(handle, np.uint32)  # object list count
+    _ = _read_sm4_value(handle, np.uint8)  # data flag
+    _read_sm4_array(handle, np.uint8, 3)  # reserved flags
+    _read_sm4_array(handle, np.uint8, 60)  # reserved
+    if xsize <= 0 or ysize <= 0:
+        return None
+    return {
+        "page_type": page_type,
+        "scan_type": scan_type,
+        "line_type": line_type,
+        "xsize": xsize,
+        "ysize": ysize,
+        "xscale": xscale,
+        "yscale": yscale,
+        "zscale": zscale,
+        "zoffset": zoffset,
+        "page_data_size": page_data_size,
+    }
+
+
+def _read_sm4_image_data(handle, data_offset, info):
+    page_data_size = info["page_data_size"]
+    if page_data_size <= 0:
+        return None
+    xsize = info["xsize"]
+    ysize = info["ysize"]
+    count = page_data_size // 4
+    if count <= 0:
+        return None
+    handle.seek(data_offset, 0)
+    dtype = np.float32 if info["line_type"] in SM4_FLOAT_LINE_TYPES else np.int32
+    raw = np.fromfile(handle, dtype=dtype, count=count)
+    expected = xsize * ysize
+    if raw.size < expected:
+        return None
+    if raw.size != expected:
+        raw = raw[:expected]
+    data = raw.reshape((xsize, ysize))
+    if info["xscale"] < 0:
+        data = np.flip(data, axis=1)
+    if info["yscale"] > 0:
+        data = np.flip(data, axis=0)
+    data = data.astype(np.float32) * info["zscale"] + info["zoffset"]
+    return data
+
+
+def read_sm4_z_forward(path: Path, verbose: bool = False):
+    fallback = None
+    with path.open("rb") as handle:
+        header_size = int(_read_sm4_value(handle, np.uint16))
+        _read_sm4_array(handle, np.uint16, 18)
+        _ = _read_sm4_value(handle, np.uint32)  # total page count
+        object_list_count = int(_read_sm4_value(handle, np.uint32))
+        _ = _read_sm4_value(handle, np.uint32)  # object field size
+        _read_sm4_array(handle, np.uint32, 2)
+
+        handle.seek(header_size + 2, 0)
+        file_objects = _read_sm4_objects(handle, object_list_count)
+        page_index_header_offset = _find_sm4_object_offset(file_objects, SM4_OBJECT_PAGE_INDEX_HEADER)
+        if page_index_header_offset is None:
+            if verbose:
+                print(f"[WARN] {path}: missing SM4 page index header")
+            return None
+
+        handle.seek(page_index_header_offset, 0)
+        page_count = int(_read_sm4_value(handle, np.uint32))
+        page_index_obj_count = int(_read_sm4_value(handle, np.uint32))
+        _read_sm4_array(handle, np.uint32, 2)
+        page_index_objects = _read_sm4_objects(handle, page_index_obj_count)
+        page_index_array_offset = _find_sm4_object_offset(page_index_objects, SM4_OBJECT_PAGE_INDEX_ARRAY)
+        if page_index_array_offset is None:
+            if verbose:
+                print(f"[WARN] {path}: missing SM4 page index array")
+            return None
+
+        handle.seek(page_index_array_offset, 0)
+        for _ in range(page_count):
+            _read_sm4_array(handle, np.uint16, 8)
+            page_data_type = int(_read_sm4_value(handle, np.uint32))
+            _ = _read_sm4_value(handle, np.uint32)  # page source type
+            page_obj_count = int(_read_sm4_value(handle, np.uint32))
+            _ = _read_sm4_value(handle, np.uint32)  # minor version
+            page_objects = _read_sm4_objects(handle, page_obj_count)
+            if page_data_type != SM4_PAGE_DATA_IMAGE:
+                continue
+            header_offset = _find_sm4_object_offset(page_objects, SM4_OBJECT_PAGE_HEADER)
+            data_offset = _find_sm4_object_offset(page_objects, SM4_OBJECT_PAGE_DATA)
+            if header_offset is None or data_offset is None:
+                continue
+            pos = handle.tell()
+            info = _read_sm4_page_header(handle, header_offset)
+            handle.seek(pos, 0)
+            if info is None:
+                continue
+            if info["page_type"] != SM4_PAGE_TOPOGRAPHIC:
+                continue
+            if info["scan_type"] == SM4_SCAN_FORWARD:
+                data = _read_sm4_image_data(handle, data_offset, info)
+                if data is not None:
+                    return data
+            if fallback is None:
+                fallback = (data_offset, info)
+
+        if fallback:
+            data_offset, info = fallback
+            return _read_sm4_image_data(handle, data_offset, info)
+
+    return None
 
 
 def has_signal(data: np.ndarray, const_tol: float, zero_tol: float) -> bool:
@@ -399,6 +579,107 @@ def collect_previews(out_dir: Path, collect_dir: Path, rel_path: Path, folder: P
         shutil.copy2(image_path, collect_dir / new_name)
 
 
+def process_sxm_file(path: Path, args, builders, counts, out_dir):
+    header = parse_header(path)
+    channels = parse_channels(header["data_info"])
+
+    z_index = find_channel_index(channels, Z_CANONICAL)
+    freq_index = find_channel_index(channels, FREQ_SHIFT_CANONICAL)
+    current_index = find_channel_index(channels, CURRENT_CANONICAL)
+
+    label = extract_tail_id(path.stem, args.label_digits)
+
+    with path.open("rb") as handle:
+        z_data = read_channel(handle, header, z_index) if z_index is not None else None
+        freq_data = read_channel(handle, header, freq_index) if freq_index is not None else None
+
+        z_has_signal = has_signal(z_data, args.const_tol, args.zero_tol) if z_data is not None else False
+        freq_has_signal = has_signal(freq_data, args.const_tol, args.zero_tol) if freq_data is not None else False
+
+        for ch in channels:
+            cname = canonical_name(ch.name)
+            if is_backward_channel(ch.name, ch.direction):
+                continue
+            if cname in SKIP_CANONICAL:
+                continue
+
+            data = None
+            channel_key = cname
+            channel_label = ch.name
+
+            if cname in Z_CANONICAL:
+                if not z_has_signal:
+                    continue
+                data = z_data
+                data = apply_scan_dir(data, header["scan_dir"])
+                tile = render_tile(data, pick_colormap("z"), args.tile_size, label, args.percentiles, not args.no_label)
+                builders.setdefault("Z", MosaicBuilder("Z", out_dir, args.tile_size, args.max_tiles, args.cols)).add(tile)
+                counts["Z"] = counts.get("Z", 0) + 1
+
+                z_corr = line_normalize_z(z_data)
+                z_corr = apply_scan_dir(z_corr, header["scan_dir"])
+                tile = render_tile(z_corr, pick_colormap("z_line"), args.tile_size, label, args.percentiles, not args.no_label)
+                builders.setdefault("Z_line", MosaicBuilder("Z_line", out_dir, args.tile_size, args.max_tiles, args.cols)).add(tile)
+                counts["Z_line"] = counts.get("Z_line", 0) + 1
+                continue
+
+            if cname in FREQ_SHIFT_CANONICAL:
+                if not freq_has_signal:
+                    continue
+                data = freq_data
+            elif cname in CURRENT_CANONICAL:
+                if z_has_signal and not freq_has_signal:
+                    continue
+                if current_index is None:
+                    continue
+                data = read_channel(handle, header, current_index)
+            else:
+                data = read_channel(handle, header, ch.index)
+
+            if data is None:
+                continue
+
+            if args.skip_constant and not has_signal(data, args.const_tol, args.zero_tol):
+                continue
+
+            data = apply_scan_dir(data, header["scan_dir"])
+            cmap_name = pick_colormap(channel_key)
+
+            builder = builders.get(channel_label)
+            if builder is None:
+                builder = MosaicBuilder(channel_label, out_dir, args.tile_size, args.max_tiles, args.cols)
+                builders[channel_label] = builder
+
+            tile = render_tile(data, cmap_name, args.tile_size, label, args.percentiles, not args.no_label)
+            builder.add(tile)
+            counts[channel_label] = counts.get(channel_label, 0) + 1
+
+
+def process_sm4_file(path: Path, args, builders, counts, out_dir):
+    data = read_sm4_z_forward(path, verbose=args.verbose)
+    if data is None:
+        return
+    if args.skip_constant and not has_signal(data, args.const_tol, args.zero_tol):
+        return
+    label = extract_tail_id(path.stem, args.label_digits)
+    tile = render_tile(data, pick_colormap("z"), args.tile_size, label, args.percentiles, not args.no_label)
+    builder = builders.get("Z")
+    if builder is None:
+        builder = MosaicBuilder("Z", out_dir, args.tile_size, args.max_tiles, args.cols)
+        builders["Z"] = builder
+    builder.add(tile)
+    counts["Z"] = counts.get("Z", 0) + 1
+
+    z_corr = line_normalize_z(data)
+    tile = render_tile(z_corr, pick_colormap("z_line"), args.tile_size, label, args.percentiles, not args.no_label)
+    builder = builders.get("Z_line")
+    if builder is None:
+        builder = MosaicBuilder("Z_line", out_dir, args.tile_size, args.max_tiles, args.cols)
+        builders["Z_line"] = builder
+    builder.add(tile)
+    counts["Z_line"] = counts.get("Z_line", 0) + 1
+
+
 def process_folder(folder: Path, files, args, progress=None, rel_path=None, collect_dir=None):
     if not files:
         return
@@ -410,80 +691,14 @@ def process_folder(folder: Path, files, args, progress=None, rel_path=None, coll
 
     for path in files:
         try:
-            header = parse_header(path)
-            channels = parse_channels(header["data_info"])
-
-            z_index = find_channel_index(channels, Z_CANONICAL)
-            freq_index = find_channel_index(channels, FREQ_SHIFT_CANONICAL)
-            current_index = find_channel_index(channels, CURRENT_CANONICAL)
-
-            label = extract_tail_id(path.stem, args.label_digits)
-
-            with path.open("rb") as handle:
-                z_data = read_channel(handle, header, z_index) if z_index is not None else None
-                freq_data = read_channel(handle, header, freq_index) if freq_index is not None else None
-
-                z_has_signal = has_signal(z_data, args.const_tol, args.zero_tol) if z_data is not None else False
-                freq_has_signal = has_signal(freq_data, args.const_tol, args.zero_tol) if freq_data is not None else False
-
-                for ch in channels:
-                    cname = canonical_name(ch.name)
-                    if is_backward_channel(ch.name, ch.direction):
-                        continue
-                    if cname in SKIP_CANONICAL:
-                        continue
-
-                    data = None
-                    channel_key = cname
-                    channel_label = ch.name
-
-                    if cname in Z_CANONICAL:
-                        if not z_has_signal:
-                            continue
-                        data = z_data
-                        data = apply_scan_dir(data, header["scan_dir"])
-                        tile = render_tile(data, pick_colormap("z"), args.tile_size, label, args.percentiles, not args.no_label)
-                        builders.setdefault("Z", MosaicBuilder("Z", out_dir, args.tile_size, args.max_tiles, args.cols)).add(tile)
-                        counts["Z"] = counts.get("Z", 0) + 1
-
-                        z_corr = line_normalize_z(z_data)
-                        z_corr = apply_scan_dir(z_corr, header["scan_dir"])
-                        tile = render_tile(z_corr, pick_colormap("z_line"), args.tile_size, label, args.percentiles, not args.no_label)
-                        builders.setdefault("Z_line", MosaicBuilder("Z_line", out_dir, args.tile_size, args.max_tiles, args.cols)).add(tile)
-                        counts["Z_line"] = counts.get("Z_line", 0) + 1
-                        continue
-
-                    if cname in FREQ_SHIFT_CANONICAL:
-                        if not freq_has_signal:
-                            continue
-                        data = freq_data
-                    elif cname in CURRENT_CANONICAL:
-                        if z_has_signal and not freq_has_signal:
-                            continue
-                        if current_index is None:
-                            continue
-                        data = read_channel(handle, header, current_index)
-                    else:
-                        data = read_channel(handle, header, ch.index)
-
-                    if data is None:
-                        continue
-
-                    if args.skip_constant and not has_signal(data, args.const_tol, args.zero_tol):
-                        continue
-
-                    data = apply_scan_dir(data, header["scan_dir"])
-                    cmap_name = pick_colormap(channel_key)
-
-                    builder = builders.get(channel_label)
-                    if builder is None:
-                        builder = MosaicBuilder(channel_label, out_dir, args.tile_size, args.max_tiles, args.cols)
-                        builders[channel_label] = builder
-
-                    tile = render_tile(data, cmap_name, args.tile_size, label, args.percentiles, not args.no_label)
-                    builder.add(tile)
-                    counts[channel_label] = counts.get(channel_label, 0) + 1
-
+            suffix = path.suffix.lower()
+            if suffix == ".sxm":
+                process_sxm_file(path, args, builders, counts, out_dir)
+            elif suffix == ".sm4":
+                process_sm4_file(path, args, builders, counts, out_dir)
+            else:
+                if args.verbose:
+                    print(f"[WARN] {path}: unsupported extension")
         except Exception as exc:
             if args.verbose:
                 print(f"[WARN] {path}: {exc}")
@@ -513,14 +728,14 @@ def find_day_folders(root: Path):
             for day_dir in month_dir.iterdir():
                 if not day_dir.is_dir():
                     continue
-                if any(day_dir.glob("*.sxm")):
+                if any(p.is_file() and p.suffix.lower() in SUPPORTED_EXTS for p in day_dir.iterdir()):
                     day_folders.append(day_dir)
     data23_dir = root / "data23"
     if data23_dir.is_dir():
         for day_dir in data23_dir.iterdir():
             if not day_dir.is_dir():
                 continue
-            if any(day_dir.glob("*.sxm")):
+            if any(p.is_file() and p.suffix.lower() in SUPPORTED_EXTS for p in day_dir.iterdir()):
                 day_folders.append(day_dir)
     return day_folders
 
@@ -529,7 +744,7 @@ def collect_folder_files(folders, limit: int):
     folder_files = []
     total = 0
     for folder in folders:
-        files = sorted(folder.glob("*.sxm"))
+        files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS)
         if limit:
             files = files[:limit]
         if not files:
@@ -547,8 +762,8 @@ def parse_percentiles(value: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate mosaic previews for Nanonis SXM files.")
-    parser.add_argument("root", help="Folder with .sxm files, or dataset root if --recursive")
+    parser = argparse.ArgumentParser(description="Generate mosaic previews for Nanonis SXM and RHK SM4 files.")
+    parser.add_argument("root", help="Folder with .sxm/.sm4 files, or dataset root if --recursive")
     parser.add_argument("--recursive", action="store_true", help="Scan year/month/day folders under root")
     parser.add_argument("--out-name", default="PreviewPy", help="Output folder name inside each day folder")
     parser.add_argument("--tile-size", type=int, default=256, help="Tile size in pixels (square)")
@@ -577,12 +792,22 @@ def main():
 
     folder_files, total_files = collect_folder_files(folders, args.limit)
     if total_files == 0:
-        print("No .sxm files found.")
+        print("No .sxm or .sm4 files found.")
         return
+
+    type_counts = {}
+    for _, files in folder_files:
+        for path in files:
+            ext = path.suffix.lower()
+            type_counts[ext] = type_counts.get(ext, 0) + 1
 
     if args.verbose:
         print(f"Folders: {len(folder_files)}")
-    print(f"Total SXM files: {total_files}")
+    if type_counts:
+        summary = ", ".join(f"{ext[1:].upper()}={count}" for ext, count in sorted(type_counts.items()))
+        print(f"Total files: {total_files} ({summary})")
+    else:
+        print(f"Total files: {total_files}")
 
     collect_dir = None
     if args.collect_dir:

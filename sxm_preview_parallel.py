@@ -29,8 +29,8 @@ def default_workers():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Parallel mosaic previews for Nanonis SXM files.")
-    parser.add_argument("root", help="Folder with .sxm files, or dataset root if --recursive")
+    parser = argparse.ArgumentParser(description="Parallel mosaic previews for Nanonis SXM and RHK SM4 files.")
+    parser.add_argument("root", help="Folder with .sxm/.sm4 files, or dataset root if --recursive")
     parser.add_argument("--recursive", action="store_true", help="Scan year/month/day folders under root")
     parser.add_argument("--workers", type=int, default=default_workers(), help="Number of worker processes")
     parser.add_argument("--out-name", default="PreviewPy", help="Output folder name inside each day folder")
@@ -60,12 +60,22 @@ def main():
 
     folder_files, total_files = base.collect_folder_files(folders, args.limit)
     if total_files == 0:
-        print("No .sxm files found.")
+        print("No .sxm or .sm4 files found.")
         return
+
+    type_counts = {}
+    for _, files in folder_files:
+        for path in files:
+            ext = path.suffix.lower()
+            type_counts[ext] = type_counts.get(ext, 0) + 1
 
     if args.verbose:
         print(f"Folders: {len(folder_files)}")
-    print(f"Total SXM files: {total_files}")
+    if type_counts:
+        summary = ", ".join(f"{ext[1:].upper()}={count}" for ext, count in sorted(type_counts.items()))
+        print(f"Total files: {total_files} ({summary})")
+    else:
+        print(f"Total files: {total_files}")
 
     collect_dir = None
     if args.collect_dir:
