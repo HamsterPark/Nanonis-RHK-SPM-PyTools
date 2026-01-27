@@ -12,14 +12,23 @@ if str(SCRIPT_DIR) not in sys.path:
 import sxm_preview as base
 
 
-def worker_task(folder, files, args, rel_path, collect_dir):
+def worker_task(folder, files, args, rel_path, collect_dir, sm4_collect_dir):
     folder_path = Path(folder)
     file_paths = [Path(p) for p in files]
     if not file_paths:
         return 0
     rel = Path(rel_path) if rel_path else None
     collect = Path(collect_dir) if collect_dir else None
-    base.process_folder(folder_path, file_paths, args, progress=None, rel_path=rel, collect_dir=collect)
+    sm4_collect = Path(sm4_collect_dir) if sm4_collect_dir else None
+    base.process_folder(
+        folder_path,
+        file_paths,
+        args,
+        progress=None,
+        rel_path=rel,
+        collect_dir=collect,
+        sm4_collect_dir=sm4_collect,
+    )
     return len(file_paths)
 
 
@@ -45,6 +54,7 @@ def main():
     parser.add_argument("--zero-tol", type=float, default=0.0, help="Tolerance for all-zero detection")
     parser.add_argument("--no-label", action="store_true", help="Disable file number labels")
     parser.add_argument("--collect-dir", default="", help="Copy mosaics into this folder with prefixed names")
+    parser.add_argument("--sm4-collect-dir", default=base.SM4_COLLECT_DEFAULT, help="SM4 previews folder (relative to root)")
     parser.add_argument("--no-progress", action="store_true", help="Disable progress bar")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
     args = parser.parse_args()
@@ -84,6 +94,13 @@ def main():
             collect_dir = root / collect_dir
         collect_dir.mkdir(parents=True, exist_ok=True)
 
+    sm4_collect_dir = None
+    if args.sm4_collect_dir:
+        sm4_collect_dir = Path(args.sm4_collect_dir)
+        if not sm4_collect_dir.is_absolute():
+            sm4_collect_dir = root / sm4_collect_dir
+        sm4_collect_dir.mkdir(parents=True, exist_ok=True)
+
     progress = base.Progress(total_files, enabled=not args.no_progress)
 
     if args.workers <= 1:
@@ -92,7 +109,15 @@ def main():
                 rel_path = folder.relative_to(root)
             except ValueError:
                 rel_path = Path(folder.name)
-            base.process_folder(folder, files, args, progress=progress, rel_path=rel_path, collect_dir=collect_dir)
+            base.process_folder(
+                folder,
+                files,
+                args,
+                progress=progress,
+                rel_path=rel_path,
+                collect_dir=collect_dir,
+                sm4_collect_dir=sm4_collect_dir,
+            )
         return
 
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
@@ -110,6 +135,7 @@ def main():
                     args,
                     str(rel_path),
                     str(collect_dir) if collect_dir else "",
+                    str(sm4_collect_dir) if sm4_collect_dir else "",
                 )
             )
         for future in as_completed(futures):

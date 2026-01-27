@@ -57,6 +57,8 @@ GRID_COLOR = (48, 48, 48)
 GRID_WIDTH = 1
 
 SUPPORTED_EXTS = {".sxm", ".sm4"}
+SM4_COLLECT_DEFAULT = "SM4_PreviewPy"
+SM4_PREVIEW_PATTERNS = ("Z_*.png", "Z_line_*.png")
 
 SM4_OBJECT_PAGE_INDEX_HEADER = 1
 SM4_OBJECT_PAGE_INDEX_ARRAY = 2
@@ -567,14 +569,19 @@ class Progress:
         print(f"\rProgress {self.count}/{self.total} [{bar}] {percent:5.1f}%", end="", flush=True)
 
 
-def collect_previews(out_dir: Path, collect_dir: Path, rel_path: Path, folder: Path):
+def collect_previews(out_dir: Path, collect_dir: Path, rel_path: Path, folder: Path, patterns=None):
     if collect_dir is None:
         return
+    if patterns is None:
+        patterns = ("*.png",)
     parts = [safe_filename(part) for part in rel_path.parts if part not in (".", "")]
     if not parts:
         parts = [safe_filename(folder.name)]
     prefix = "_".join(parts)
-    for image_path in sorted(out_dir.glob("*.png")):
+    images = []
+    for pattern in patterns:
+        images.extend(out_dir.glob(pattern))
+    for image_path in sorted(set(images)):
         new_name = f"{prefix}__{image_path.name}"
         shutil.copy2(image_path, collect_dir / new_name)
 
@@ -680,7 +687,7 @@ def process_sm4_file(path: Path, args, builders, counts, out_dir):
     counts["Z_line"] = counts.get("Z_line", 0) + 1
 
 
-def process_folder(folder: Path, files, args, progress=None, rel_path=None, collect_dir=None):
+def process_folder(folder: Path, files, args, progress=None, rel_path=None, collect_dir=None, sm4_collect_dir=None):
     if not files:
         return
     out_dir = folder / args.out_name
@@ -688,6 +695,7 @@ def process_folder(folder: Path, files, args, progress=None, rel_path=None, coll
 
     builders = {}
     counts = {}
+    sm4_seen = False
 
     for path in files:
         try:
@@ -695,6 +703,7 @@ def process_folder(folder: Path, files, args, progress=None, rel_path=None, coll
             if suffix == ".sxm":
                 process_sxm_file(path, args, builders, counts, out_dir)
             elif suffix == ".sm4":
+                sm4_seen = True
                 process_sm4_file(path, args, builders, counts, out_dir)
             else:
                 if args.verbose:
@@ -709,6 +718,8 @@ def process_folder(folder: Path, files, args, progress=None, rel_path=None, coll
         builder.finalize()
     if collect_dir is not None and rel_path is not None:
         collect_previews(out_dir, collect_dir, rel_path, folder)
+    if sm4_collect_dir is not None and sm4_seen and rel_path is not None:
+        collect_previews(out_dir, sm4_collect_dir, rel_path, folder, patterns=SM4_PREVIEW_PATTERNS)
 
     if args.verbose:
         summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
@@ -777,6 +788,7 @@ def main():
     parser.add_argument("--zero-tol", type=float, default=0.0, help="Tolerance for all-zero detection")
     parser.add_argument("--no-label", action="store_true", help="Disable file number labels")
     parser.add_argument("--collect-dir", default="", help="Copy mosaics into this folder with prefixed names")
+    parser.add_argument("--sm4-collect-dir", default=SM4_COLLECT_DEFAULT, help="SM4 previews folder (relative to root)")
     parser.add_argument("--no-progress", action="store_true", help="Disable progress bar")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
     args = parser.parse_args()
@@ -816,13 +828,28 @@ def main():
             collect_dir = root / collect_dir
         collect_dir.mkdir(parents=True, exist_ok=True)
 
+    sm4_collect_dir = None
+    if args.sm4_collect_dir:
+        sm4_collect_dir = Path(args.sm4_collect_dir)
+        if not sm4_collect_dir.is_absolute():
+            sm4_collect_dir = root / sm4_collect_dir
+        sm4_collect_dir.mkdir(parents=True, exist_ok=True)
+
     progress = Progress(total_files, enabled=not args.no_progress)
     for folder, files in folder_files:
         try:
             rel_path = folder.relative_to(root)
         except ValueError:
             rel_path = Path(folder.name)
-        process_folder(folder, files, args, progress=progress, rel_path=rel_path, collect_dir=collect_dir)
+        process_folder(
+            folder,
+            files,
+            args,
+            progress=progress,
+            rel_path=rel_path,
+            collect_dir=collect_dir,
+            sm4_collect_dir=sm4_collect_dir,
+        )
 
 
 if __name__ == "__main__":
