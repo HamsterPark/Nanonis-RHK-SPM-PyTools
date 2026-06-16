@@ -1,11 +1,13 @@
-Nanonis-RHK-SPM-PyPreview
+Nanonis-RHK-SPM-PyTools
 
-Python tools for fast preview mosaics of Nanonis SXM and RHK SM4 data.
+Python tools for Nanonis SXM and RHK SM4 SPM data: fast preview mosaics, sub-pixel image alignment/difference, and auto-cropping of unscanned regions.
 
 Files:
 - sxm_preview.py: Generate channel mosaics per folder.
 - sxm_preview_parallel.py: Parallel wrapper for large datasets.
 - make_test_subset.py: Create a random test subset of SXM/SM4 files.
+- align_sxm_diff.py: Sub-pixel align two SXM files on one channel and output their difference (A-B, B-A) plus an alignment overview figure.
+- crop_solid.py: Auto-detect and crop solid-color (unscanned) regions from exported STM/SPM images (PNG/JPG).
 
 Running instructions:
 1) Create a test subset
@@ -59,3 +61,68 @@ Performance and notes:
 - --collect-dir duplicates images and increases storage usage.
 - Default mosaic size is capped at 5x5 tiles with grid lines between tiles; adjust with --max-tiles or --cols if needed.
 - Parallel mode updates the progress bar per folder completion (coarser than per file).
+
+
+align_sxm_diff.py - sub-pixel alignment and difference of two SXM scans
+- Purpose: Compare two SXM scans of (nearly) the same area. It reads one channel
+  (default Z forward) from each file, estimates the sub-pixel drift by up-sampled
+  cross-correlation (skimage.registration.phase_cross_correlation, normalization=None),
+  resamples the second image onto the first image's grid (cubic spline), crops to the
+  fully-overlapping region, and writes the difference maps.
+- The SXM reader is self-contained (big-endian float32 payload after the ":SCANIT_END:"
+  header and the \x1a\x04 marker); no third-party SPM library is required.
+
+Outputs (named by channel/direction, e.g. "z_fwd_"):
+- <chan>_<A>-<B>.png and <chan>_<B>-<A>.png: A-B and B-A difference maps (diverging
+  RdBu colormap, symmetric scale, scale bar).
+- <chan>_alignment_overview_<A>_<B>.png: raw A / raw B / aligned B, before- vs
+  after-alignment difference, and a residual histogram.
+- <chan>_<A>-<B>.npy: the aligned difference array for further analysis.
+
+Usage:
+   # Auto-pick the two .sxm files in the script's folder, align the Z forward channel:
+   py -3 align_sxm_diff.py
+   # Explicit files / channel / options:
+   py -3 align_sxm_diff.py A.sxm B.sxm --channel "Freq Shift" --upsample 100 --smooth-sigma 1
+
+Parameters:
+- --channel: Channel name/keyword; exact name match first, then substring (default "Z").
+- --direction: forward or backward (default forward).
+- --upsample: Sub-pixel up-sampling factor (default 100).
+- --cmap: Difference colormap (default "RdBu" = red-negative / white-zero / blue-positive; use "RdBu_r" to flip).
+- --smooth-sigma: Gaussian smoothing (px) applied to the difference; default 0 (off).
+- --clip: Percentile for the symmetric color scale (default 99).
+- --outdir: Output directory (default: the first file's folder).
+
+Notes:
+- Requires numpy, scipy, scikit-image, matplotlib.
+- normalization=None (plain cross-correlation) is intentional: phase normalization can
+  lock onto SPM line-noise / periodic streaks and return a spurious large shift.
+- A compatibility shim disables platform's WMI query before importing numpy, to avoid a
+  numpy-import hang seen on some Windows machines (harmless where WMI is healthy).
+
+
+crop_solid.py - crop solid-color (unscanned) regions from STM/SPM images
+- Purpose: Exported STM/SPM images (PNG/JPG) often have solid-color borders where the
+  probe did not scan (on any edge, sometimes under a scalebar overlay). This tool detects
+  and crops those regions. It works on rendered images, not raw .sxm/.sm4 data.
+- Algorithm: for each row/column, take the median color and the fraction of pixels within
+  a tolerance of it; rows/cols that are >85% uniform are "solid". It scans inward from each
+  edge in blocks (robust to scalebar/crosshair overlays) and iterates up to 3x (removing
+  top/bottom can reveal left/right solids), with safety limits (min crop 8%, never >90%).
+- Requires: numpy, Pillow (PIL).
+
+Usage:
+   # Crop all images in a directory (recursive), in place:
+   py -3 crop_solid.py ./stm_images/
+   # Preview only (do not modify files):
+   py -3 crop_solid.py ./stm_images/ --dry-run
+
+Parameters:
+- --tolerance: Max per-channel deviation from the median to count as the same color (default 15).
+- --min-crop: Minimum crop as a fraction of the dimension; avoids trimming thin borders (default 0.08).
+- --block-size: Rows/cols grouped into one scanning block (default 20).
+- --dry-run: Preview crops without modifying files.
+- -v, --verbose: Print details for each cropped image.
+
+(Imported from the former stm-crop-tool repository.)
