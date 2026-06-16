@@ -6,6 +6,7 @@ Files:
 - sxm_preview.py: Generate channel mosaics per folder.
 - sxm_preview_parallel.py: Parallel wrapper for large datasets.
 - make_test_subset.py: Create a random test subset of SXM/SM4 files.
+- align_sxm_diff.py: Sub-pixel align two SXM files on one channel and output their difference (A-B, B-A) plus an alignment overview figure.
 
 Running instructions:
 1) Create a test subset
@@ -59,3 +60,42 @@ Performance and notes:
 - --collect-dir duplicates images and increases storage usage.
 - Default mosaic size is capped at 5x5 tiles with grid lines between tiles; adjust with --max-tiles or --cols if needed.
 - Parallel mode updates the progress bar per folder completion (coarser than per file).
+
+
+align_sxm_diff.py - sub-pixel alignment and difference of two SXM scans
+- Purpose: Compare two SXM scans of (nearly) the same area. It reads one channel
+  (default Z forward) from each file, estimates the sub-pixel drift by up-sampled
+  cross-correlation (skimage.registration.phase_cross_correlation, normalization=None),
+  resamples the second image onto the first image's grid (cubic spline), crops to the
+  fully-overlapping region, and writes the difference maps.
+- The SXM reader is self-contained (big-endian float32 payload after the ":SCANIT_END:"
+  header and the \x1a\x04 marker); no third-party SPM library is required.
+
+Outputs (named by channel/direction, e.g. "z_fwd_"):
+- <chan>_<A>-<B>.png and <chan>_<B>-<A>.png: A-B and B-A difference maps (diverging
+  RdBu colormap, symmetric scale, scale bar).
+- <chan>_alignment_overview_<A>_<B>.png: raw A / raw B / aligned B, before- vs
+  after-alignment difference, and a residual histogram.
+- <chan>_<A>-<B>.npy: the aligned difference array for further analysis.
+
+Usage:
+   # Auto-pick the two .sxm files in the script's folder, align the Z forward channel:
+   py -3 align_sxm_diff.py
+   # Explicit files / channel / options:
+   py -3 align_sxm_diff.py A.sxm B.sxm --channel "Freq Shift" --upsample 100 --smooth-sigma 1
+
+Parameters:
+- --channel: Channel name/keyword; exact name match first, then substring (default "Z").
+- --direction: forward or backward (default forward).
+- --upsample: Sub-pixel up-sampling factor (default 100).
+- --cmap: Difference colormap (default "RdBu" = red-negative / white-zero / blue-positive; use "RdBu_r" to flip).
+- --smooth-sigma: Gaussian smoothing (px) applied to the difference; default 0 (off).
+- --clip: Percentile for the symmetric color scale (default 99).
+- --outdir: Output directory (default: the first file's folder).
+
+Notes:
+- Requires numpy, scipy, scikit-image, matplotlib.
+- normalization=None (plain cross-correlation) is intentional: phase normalization can
+  lock onto SPM line-noise / periodic streaks and return a spurious large shift.
+- A compatibility shim disables platform's WMI query before importing numpy, to avoid a
+  numpy-import hang seen on some Windows machines (harmless where WMI is healthy).
