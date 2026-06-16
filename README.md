@@ -1,12 +1,13 @@
-Nanonis-RHK-SPM-PyPreview
+Nanonis-RHK-SPM-PyTools
 
-Python tools for fast preview mosaics of Nanonis SXM and RHK SM4 data.
+Python tools for Nanonis SXM and RHK SM4 SPM data: fast preview mosaics, sub-pixel image alignment/difference, and auto-cropping of unscanned regions.
 
 Files:
 - sxm_preview.py: Generate channel mosaics per folder.
 - sxm_preview_parallel.py: Parallel wrapper for large datasets.
 - make_test_subset.py: Create a random test subset of SXM/SM4 files.
 - align_sxm_diff.py: Sub-pixel align two SXM files on one channel and output their difference (A-B, B-A) plus an alignment overview figure.
+- crop_solid.py: Auto-detect and crop solid-color (unscanned) regions from exported STM/SPM images (PNG/JPG).
 
 Running instructions:
 1) Create a test subset
@@ -99,3 +100,29 @@ Notes:
   lock onto SPM line-noise / periodic streaks and return a spurious large shift.
 - A compatibility shim disables platform's WMI query before importing numpy, to avoid a
   numpy-import hang seen on some Windows machines (harmless where WMI is healthy).
+
+
+crop_solid.py - crop solid-color (unscanned) regions from STM/SPM images
+- Purpose: Exported STM/SPM images (PNG/JPG) often have solid-color borders where the
+  probe did not scan (on any edge, sometimes under a scalebar overlay). This tool detects
+  and crops those regions. It works on rendered images, not raw .sxm/.sm4 data.
+- Algorithm: for each row/column, take the median color and the fraction of pixels within
+  a tolerance of it; rows/cols that are >85% uniform are "solid". It scans inward from each
+  edge in blocks (robust to scalebar/crosshair overlays) and iterates up to 3x (removing
+  top/bottom can reveal left/right solids), with safety limits (min crop 8%, never >90%).
+- Requires: numpy, Pillow (PIL).
+
+Usage:
+   # Crop all images in a directory (recursive), in place:
+   py -3 crop_solid.py ./stm_images/
+   # Preview only (do not modify files):
+   py -3 crop_solid.py ./stm_images/ --dry-run
+
+Parameters:
+- --tolerance: Max per-channel deviation from the median to count as the same color (default 15).
+- --min-crop: Minimum crop as a fraction of the dimension; avoids trimming thin borders (default 0.08).
+- --block-size: Rows/cols grouped into one scanning block (default 20).
+- --dry-run: Preview crops without modifying files.
+- -v, --verbose: Print details for each cropped image.
+
+(Imported from the former stm-crop-tool repository.)
