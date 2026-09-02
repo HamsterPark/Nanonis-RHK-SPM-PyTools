@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanonis-rhk-spm-pytools"
+dynamic = ["version"]
+description = "Preview mosaics, sub-pixel alignment and border cropping for Nanonis SXM and RHK SM4 scanning-probe-microscopy data"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Yuanhao Lyu" }]
+requires-python = ">=3.10"
+keywords = ["stm", "afm", "spm", "nanonis", "sxm", "rhk", "sm4", "microscopy", "image-registration"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Image Processing",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy>=1.24",
+  "pillow>=9.1",
+  "matplotlib>=3.6",
+]
+
+[project.optional-dependencies]
+align = [
+  "scipy>=1.10",
+  "scikit-image>=0.20",
+]
+dev = [
+  "scipy>=1.10",
+  "scikit-image>=0.20",
+  "pytest>=7.0",
+  "ruff>=0.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/HamsterPark/Nanonis-RHK-SPM-PyTools"
+Issues = "https://github.com/HamsterPark/Nanonis-RHK-SPM-PyTools/issues"
+
+[project.scripts]
+spm-preview = "spmtools.cli:preview_main"
+spm-align-diff = "spmtools.cli:align_main"
+spm-crop-solid = "spmtools.cli:crop_main"
+spm-sample = "spmtools.cli:sample_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "spmtools.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:spmtools"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "NPY", "RUF100"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["spmtools"]
