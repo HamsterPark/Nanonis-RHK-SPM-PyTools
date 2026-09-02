@@ -87,6 +87,7 @@ def write_sxm(
     data = header.encode("latin-1") + b"\x1a\x04" + bytes(payload)
     if truncate:
         data = data[:-truncate]
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return path
 
@@ -187,6 +188,7 @@ def write_sm4(path: Path, pages: list[dict[str, Any]]) -> Path:
     pih_objects = struct.pack("<III", 2, page_index_array_offset, entry_size * len(pages))
     out = file_header + file_objects + page_index_header + pih_objects + b"".join(entries)
     assert len(out) == body_offset
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(out + b"".join(blobs))
     return path
 
